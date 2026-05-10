@@ -1,0 +1,28 @@
+# Environment — never commit secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
+
+# Generated artefacts
+uploads/
+generated_tests/
+temp/
+.coverage
+coverage.json
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp

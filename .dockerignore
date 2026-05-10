@@ -1,0 +1,17 @@
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+venv/
+.venv/
+uploads/
+generated_tests/
+temp/
+.coverage
+coverage.json
+htmlcov/
+.vscode/
+.idea/
+node_modules/

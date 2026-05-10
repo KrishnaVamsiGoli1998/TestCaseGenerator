@@ -1,0 +1,15 @@
+# Web framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# AI provider
+anthropic
+
+# Test tooling
+pytest
+pytest-cov
+coverage
+
+# Config
+python-dotenv

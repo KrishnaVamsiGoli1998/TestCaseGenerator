@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Test Generator</title>
+  <link rel="stylesheet" href="/static/style.css?v=3" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">AI Test Generator</span>
+      </div>
+      <p class="header-sub">M.Tech Dissertation — BITS WILP</p>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ── Upload State ───────────────────────────────────────────────────── -->
+    <section id="upload-section" class="card upload-card">
+
+      <!-- Language Toggle -->
+      <div class="lang-toggle-wrap">
+        <span class="lang-label">Language:</span>
+        <div class="lang-toggle" role="group">
+          <button class="lang-btn active" id="btn-python" data-lang="python">
+            🐍 Python
+          </button>
+          <button class="lang-btn" id="btn-javascript" data-lang="javascript">
+            🟨 JavaScript
+          </button>
+        </div>
+      </div>
+
+      <div class="upload-icon" id="upload-icon">🐍</div>
+      <h2 id="upload-title">Upload Python File(s)</h2>
+      <p class="upload-desc" id="upload-desc">
+        Upload one or more <code id="ext-hint">.py</code> files. The system will parse
+        functions, generate tests, run them, measure coverage, and iterate automatically.
+      </p>
+
+      <!-- Upload Mode Tabs -->
+      <div class="upload-mode-tabs">
+        <button class="mode-tab active" id="tab-single" data-mode="single">Single File</button>
+        <button class="mode-tab" id="tab-multi" data-mode="multi">Multiple Files</button>
+      </div>
+
+      <!-- Drop Zone -->
+      <div class="file-drop-zone" id="drop-zone">
+        <input type="file" id="file-input" accept=".py" hidden />
+        <input type="file" id="file-input-multi" accept=".py" multiple hidden />
+
+        <div class="drop-inner" id="drop-inner">
+          <span class="drop-icon">📂</span>
+          <p>Drag &amp; drop your file(s) here</p>
+          <p class="or-divider">— or —</p>
+          <button class="btn btn-secondary" id="browse-btn">Browse Files</button>
+        </div>
+
+        <div class="file-selected" id="file-selected" hidden>
+          <div id="file-list"></div>
+          <button class="btn-icon" id="clear-files" title="Remove all files">✕ Clear</button>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="generate-btn" disabled>
+        ⚡ Generate Tests
+      </button>
+
+      <p class="note" id="upload-note">Max 500 KB per file · Up to 10 files · Python and JavaScript supported</p>
+    </section>
+
+    <!-- ── Loading State ─────────────────────────────────────────────────── -->
+    <section id="loading-section" class="card loading-card" hidden>
+      <div class="spinner"></div>
+      <h2 id="loading-title">Processing…</h2>
+      <p id="loading-status" class="loading-status">Initialising pipeline…</p>
+
+      <div class="pipeline-steps">
+        <div class="step" id="step-parse"><span class="step-dot"></span><span class="step-label">Parsing source files</span></div>
+        <div class="step" id="step-generate"><span class="step-dot"></span><span class="step-label">Generating tests</span></div>
+        <div class="step" id="step-run"><span class="step-dot"></span><span class="step-label">Running tests</span></div>
+        <div class="step" id="step-coverage"><span class="step-dot"></span><span class="step-label">Measuring code coverage</span></div>
+        <div class="step" id="step-iterate"><span class="step-dot"></span><span class="step-label">Iterating to improve results</span></div>
+      </div>
+    </section>
+
+    <!-- ── Results State ─────────────────────────────────────────────────── -->
+    <section id="results-section" hidden>
+
+      <!-- Summary Card -->
+      <div class="card summary-card">
+        <div class="summary-header">
+          <div>
+            <h2>Results: <span id="res-filename"></span></h2>
+            <div id="res-badges" class="badge-row"></div>
+          </div>
+          <button class="btn btn-secondary" id="new-file-btn">Test Another File</button>
+        </div>
+        <div class="summary-grid">
+          <div class="stat-box"><span class="stat-value" id="res-generated">–</span><span class="stat-label">Tests Generated</span></div>
+          <div class="stat-box stat-pass"><span class="stat-value green" id="res-passed">–</span><span class="stat-label">Passed</span></div>
+          <div class="stat-box stat-fail"><span class="stat-value red" id="res-failed">–</span><span class="stat-label">Failed</span></div>
+          <div class="stat-box"><span class="stat-value" id="res-iterations">–</span><span class="stat-label">Iterations</span></div>
+          <div class="stat-box"><span class="stat-value" id="res-time">–</span><span class="stat-label">Time (s)</span></div>
+        </div>
+      </div>
+
+      <!-- File list (multi-file) -->
+      <div class="card" id="file-list-card" hidden>
+        <h3>Uploaded Files</h3>
+        <div id="uploaded-file-list" class="uploaded-file-list"></div>
+      </div>
+
+      <!-- Dependency Classification (multi-file only) -->
+      <div class="card" id="dep-classification-card" hidden>
+        <h3 class="card-title">📊 Dependency Analysis</h3>
+        <div id="dep-classification-body"></div>
+      </div>
+
+      <!-- Coverage -->
+      <div class="card">
+        <h3>Code Coverage</h3>
+        <div class="coverage-row">
+          <div class="coverage-bar-wrap">
+            <div class="coverage-bar" id="coverage-bar">
+              <span class="coverage-label" id="coverage-label">0%</span>
+            </div>
+          </div>
+        </div>
+        <p class="coverage-note" id="coverage-note"></p>
+      </div>
+
+      <!-- Download -->
+      <div class="card download-card">
+        <h3>Generated Test File</h3>
+        <p>Download and run independently with <code id="run-cmd">pytest</code>.</p>
+        <a id="download-link" class="btn btn-primary" href="#" download>⬇ Download Test File</a>
+      </div>
+
+      <!-- Test Results Table -->
+      <div class="card">
+        <h3>Test Results</h3>
+        <div class="table-wrap">
+          <table class="results-table">
+            <thead>
+              <tr><th>Test Name</th><th>Status</th><th>Error Message</th></tr>
+            </thead>
+            <tbody id="results-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Iteration Log -->
+      <div class="card">
+        <div class="collapsible-header" id="log-toggle">
+          <h3>Iteration Log</h3>
+          <span class="chevron" id="log-chevron">▼</span>
+        </div>
+        <div id="log-body" class="log-body">
+          <div id="iteration-log"></div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ── Error Banner ───────────────────────────────────────────────────── -->
+    <div id="error-banner" class="error-banner">
+      <span id="error-text"></span>
+      <button class="btn-icon" onclick="document.getElementById('error-banner').classList.remove('visible')">✕</button>
+    </div>
+
+  </main>
+
+  <footer class="site-footer">
+    <p>AI-Powered Automatic Test Case Generator · M.Tech Final Year Dissertation · BITS WILP</p>
+  </footer>
+
+  <script src="/static/app.js?v=3"></script>
+</body>
+</html>
