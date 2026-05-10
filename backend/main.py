@@ -3,12 +3,14 @@ main.py — FastAPI Application
 Exposes the AI test generation pipeline as a REST API.
 Supports: single file and multi-file upload for both Python and JavaScript.
 """
+import asyncio
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +21,9 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 TEST_OUTPUT_DIR = os.getenv("TEST_OUTPUT_DIR", "generated_tests")
 MAX_FILE_SIZE_KB = int(os.getenv("MAX_FILE_SIZE_KB", "500"))
 MAX_FILES = int(os.getenv("MAX_FILES_PER_SESSION", "10"))
+PIPELINE_TIMEOUT = int(os.getenv("PIPELINE_TIMEOUT_SECONDS", "180"))
+
+_executor = ThreadPoolExecutor(max_workers=2)
 
 for d in (UPLOAD_DIR, TEST_OUTPUT_DIR, "temp"):
     os.makedirs(d, exist_ok=True)
@@ -112,8 +117,14 @@ async def generate(
 
     from .feedback_loop import run_pipeline
     try:
-        results = run_pipeline(saved_paths, language=language)
+        loop = asyncio.get_event_loop()
+        results = await asyncio.wait_for(
+            loop.run_in_executor(_executor, run_pipeline, saved_paths, language),
+            timeout=PIPELINE_TIMEOUT,
+        )
         return JSONResponse(content=results)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail=f"Pipeline timed out after {PIPELINE_TIMEOUT}s — try a smaller file")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Pipeline error: {exc}") from exc
 
