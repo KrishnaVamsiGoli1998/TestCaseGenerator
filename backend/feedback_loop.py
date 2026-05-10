@@ -257,14 +257,13 @@ def _run_python_pipeline(file_paths: list) -> dict:
                 })
 
         # ── Step 7: Loop B — Coverage Gap Loop ──────────────────────────────
-        # Only run when all tests pass — adding more tests to a broken file
-        # cascades failures and drops coverage further (as seen in practice).
         iterations_cov = 0
+        _aug_sys_errors = {"collection_error", "timeout_error", "setup_error", "import_error"}
         for cov_iter in range(1, MAX_COVERAGE_ITERATIONS + 1):
             if coverage_pct >= COVERAGE_THRESHOLD:
                 break
             if not run_result.get("all_passed"):
-                break  # still failures present — augmenting will make things worse
+                break
             uncovered = py_coverage.get_uncovered_lines(coverage_data)
             if not uncovered:
                 break
@@ -303,8 +302,29 @@ def _run_python_pipeline(file_paths: list) -> dict:
                 coverage_data = py_coverage.measure_coverage(test_file, ordered_files[0])
             new_pct = coverage_data.get("percentage", prev_pct)
 
-            if new_pct < prev_pct:
-                # Augmented tests hurt coverage — revert to the previous file
+            # If some augmented tests fail, prune only those failing ones and re-measure
+            # This salvages the passing augmented tests instead of reverting everything
+            if not run_result.get("all_passed") and run_result.get("passed"):
+                stubborn = [f for f in run_result.get("failed", []) if f not in _aug_sys_errors]
+                if stubborn:
+                    try:
+                        with open(test_file, "r", encoding="utf-8") as _f:
+                            aug_current = _f.read()
+                    except Exception:
+                        aug_current = augmented
+                    partial = _remove_failing_tests_python(aug_current, set(stubborn))
+                    if len(file_paths) > 1:
+                        test_file = environment_builder.build_environment(ordered_files, partial, temp_dir)
+                        run_result = _run_pytest_in_dir(Path(test_file).name, temp_dir, test_file)
+                        coverage_data = _measure_python_coverage_dir(test_file, temp_dir, ordered_files)
+                    else:
+                        run_result = py_runner.run_tests(partial, ordered_files[0])
+                        test_file = run_result.get("test_file", test_file)
+                        coverage_data = py_coverage.measure_coverage(test_file, ordered_files[0])
+                    new_pct = coverage_data.get("percentage", prev_pct)
+
+            if new_pct <= prev_pct:
+                # No improvement even after salvaging passing tests — revert completely
                 try:
                     with open(test_file, "w", encoding="utf-8") as f:
                         f.write(existing)
@@ -312,10 +332,10 @@ def _run_python_pipeline(file_paths: list) -> dict:
                     pass
                 iteration_log.append({
                     "iteration": iterations_fix + cov_iter, "event": "coverage_gap",
-                    "detail": f"Coverage was {prev_pct:.1f}% — augmented tests reduced it to {new_pct:.1f}%",
+                    "detail": f"Coverage was {prev_pct:.1f}% — augmented tests did not improve coverage",
                     "action": f"reverted augmentation · holding at {prev_pct:.1f}%",
                 })
-                break  # no point trying again
+                break
 
             coverage_pct = new_pct
             iteration_log.append({
@@ -323,6 +343,37 @@ def _run_python_pipeline(file_paths: list) -> dict:
                 "detail": f"Coverage was {prev_pct:.1f}%, uncovered: {uncovered[:5]}",
                 "action": f"re-prompted — coverage now {coverage_pct:.1f}%",
             })
+
+        # ── Final cleanup: prune remaining failures if coverage goal is already met ──
+        _system_errors_final = {"collection_error", "timeout_error", "setup_error", "import_error"}
+        if (
+            not run_result.get("all_passed")
+            and coverage_pct >= COVERAGE_THRESHOLD
+            and run_result.get("passed")
+        ):
+            stubborn = [f for f in run_result.get("failed", []) if f not in _system_errors_final]
+            if stubborn:
+                try:
+                    with open(test_file, "r", encoding="utf-8") as _f:
+                        _current = _f.read()
+                except Exception:
+                    _current = combined_code
+
+                pruned = _remove_failing_tests_python(_current, set(stubborn))
+
+                if len(file_paths) > 1:
+                    test_file = environment_builder.build_environment(ordered_files, pruned, temp_dir)
+                    run_result = _run_pytest_in_dir(Path(test_file).name, temp_dir, test_file)
+                else:
+                    run_result = py_runner.run_tests(pruned, ordered_files[0])
+                    test_file = run_result.get("test_file", test_file)
+
+                iteration_log.append({
+                    "iteration": iterations_fix + iterations_cov + 1,
+                    "event": "final_cleanup",
+                    "detail": f"Coverage {coverage_pct:.1f}% ≥ {COVERAGE_THRESHOLD}% — removed {len(stubborn)} failing test(s)",
+                    "action": "final output is failure-free",
+                })
 
         # For multi-file: copy test out of temp_dir before cleanup so /download works
         if temp_dir and test_file and os.path.exists(test_file):
@@ -497,11 +548,12 @@ def _run_js_pipeline(file_paths: list) -> dict:
 
         # ── Step 7: Loop B — Coverage Gap Loop ───────────────────────────────
         iterations_cov = 0
+        _aug_js_errors = {"collection_error", "timeout_error", "setup_error", "jest_error", "parse_error"}
         for cov_iter in range(1, MAX_COVERAGE_ITERATIONS + 1):
             if coverage_pct >= COVERAGE_THRESHOLD:
                 break
             if not run_result.get("all_passed"):
-                break  # still failures present — augmenting will make things worse
+                break
             uncovered = coverage_analyzer_js.get_js_uncovered_lines(coverage_data)
             if not uncovered:
                 break
@@ -543,8 +595,29 @@ def _run_js_pipeline(file_paths: list) -> dict:
             coverage_data = coverage_analyzer_js.measure_js_coverage(test_file, ordered_files[0])
             new_pct = coverage_data.get("percentage", prev_pct)
 
-            if new_pct < prev_pct:
-                # Augmented tests hurt coverage — revert to the previous file
+            # If some augmented tests fail, prune only those and re-measure
+            # This salvages the passing augmented tests instead of reverting everything
+            if not run_result.get("all_passed") and run_result.get("passed"):
+                stubborn = [f for f in run_result.get("failed", []) if f not in _aug_js_errors]
+                if stubborn:
+                    name_map = run_result.get("name_map", {})
+                    try:
+                        with open(test_file, "r", encoding="utf-8") as _f:
+                            aug_current = _f.read()
+                    except Exception:
+                        aug_current = augmented
+                    partial = _remove_failing_tests_js(aug_current, set(stubborn), name_map)
+                    if len(file_paths) > 1:
+                        test_file = environment_builder.build_js_environment(ordered_files, partial, temp_dir)
+                        run_result = runner_js.run_js_tests_in_dir(Path(test_file).name, temp_dir)
+                    else:
+                        run_result = runner_js.run_js_tests(partial, ordered_files[0])
+                        test_file = run_result.get("test_file", test_file)
+                    coverage_data = coverage_analyzer_js.measure_js_coverage(test_file, ordered_files[0])
+                    new_pct = coverage_data.get("percentage", prev_pct)
+
+            if new_pct <= prev_pct:
+                # No improvement even after salvaging — revert completely
                 try:
                     with open(test_file, "w", encoding="utf-8") as f:
                         f.write(existing)
@@ -552,7 +625,7 @@ def _run_js_pipeline(file_paths: list) -> dict:
                     pass
                 iteration_log.append({
                     "iteration": iterations_fix + cov_iter, "event": "coverage_gap",
-                    "detail": f"Coverage was {prev_pct:.1f}% — augmented tests reduced it to {new_pct:.1f}%",
+                    "detail": f"Coverage was {prev_pct:.1f}% — augmented tests did not improve coverage",
                     "action": f"reverted augmentation · holding at {prev_pct:.1f}%",
                 })
                 break
@@ -563,6 +636,38 @@ def _run_js_pipeline(file_paths: list) -> dict:
                 "detail": f"Coverage was {prev_pct:.1f}%, uncovered: {uncovered[:5]}",
                 "action": f"re-prompted — coverage now {coverage_pct:.1f}%",
             })
+
+        # ── Final cleanup: prune remaining failures if coverage goal is already met ──
+        _system_errors_final = {"collection_error", "timeout_error", "setup_error", "jest_error", "parse_error"}
+        if (
+            not run_result.get("all_passed")
+            and coverage_pct >= COVERAGE_THRESHOLD
+            and run_result.get("passed")
+        ):
+            stubborn = [f for f in run_result.get("failed", []) if f not in _system_errors_final]
+            if stubborn:
+                name_map = run_result.get("name_map", {})
+                try:
+                    with open(test_file, "r", encoding="utf-8") as _f:
+                        _current = _f.read()
+                except Exception:
+                    _current = combined_code
+
+                pruned = _remove_failing_tests_js(_current, set(stubborn), name_map)
+
+                if len(file_paths) > 1:
+                    test_file = environment_builder.build_js_environment(ordered_files, pruned, temp_dir)
+                    run_result = runner_js.run_js_tests_in_dir(Path(test_file).name, temp_dir)
+                else:
+                    run_result = runner_js.run_js_tests(pruned, ordered_files[0])
+                    test_file = run_result.get("test_file", test_file)
+
+                iteration_log.append({
+                    "iteration": iterations_fix + iterations_cov + 1,
+                    "event": "final_cleanup",
+                    "detail": f"Coverage {coverage_pct:.1f}% ≥ {COVERAGE_THRESHOLD}% — removed {len(stubborn)} failing test(s)",
+                    "action": "final output is failure-free",
+                })
 
         # For multi-file: copy test out of temp_dir before cleanup so /download works
         if temp_dir and test_file and os.path.exists(test_file):

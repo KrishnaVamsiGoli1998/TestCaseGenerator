@@ -13,6 +13,8 @@ load_dotenv()
 
 _client = None
 
+MAX_TESTS_PER_FUNCTION = int(os.getenv("MAX_TESTS_PER_FUNCTION", "3"))
+
 
 def _get_client() -> anthropic.Anthropic:
     global _client
@@ -47,7 +49,7 @@ def build_prompt(function_meta: dict, module_name: str = "") -> str:
         else "none"
     )
 
-    return f"""Generate comprehensive pytest unit tests for the following Python function.
+    return f"""Generate exactly {MAX_TESTS_PER_FUNCTION} pytest unit tests for the following Python function.
 
 Function name: {name}
 Arguments: {args}
@@ -62,22 +64,21 @@ Source code (shown for reference ONLY — do NOT copy it into your output):
 
 CRITICAL RULES — violating any of these will break coverage measurement:
 1. Return ONLY test function definitions — no prose, no markdown fences.
-2. Do NOT copy, redefine, or re-implement any function from the source code.
+2. Write EXACTLY {MAX_TESTS_PER_FUNCTION} test functions — no more, no fewer.
+   Prioritise: 1 happy path, 1 edge case, 1 exception (if the function raises one).
+3. Do NOT copy, redefine, or re-implement any function from the source code.
    The function already exists in the module; your tests must CALL it, not redefine it.
-3. Import statements: you MAY include stdlib imports (e.g. from unittest.mock import MagicMock,
+4. Import statements: you MAY include stdlib imports (e.g. from unittest.mock import MagicMock,
    import types, import os) if your tests need them. Do NOT import pytest or any source module —
    the harness adds those automatically.
-4. Every test function name must start with test_.
-5. Use monkeypatch to mock builtins (input, random, etc.) when the function uses them.
-6. EXCEPTION HANDLING — this is mandatory:
+5. Every test function name must start with test_.
+6. Use monkeypatch to mock builtins (input, random, etc.) when the function uses them.
+7. EXCEPTION HANDLING — this is mandatory:
    - If the function raises an exception for invalid inputs, use pytest.raises():
        def test_empty_input():
            with pytest.raises(ValueError):
                some_function("")
    - NEVER call a function that raises an exception without wrapping it in pytest.raises().
-   - Inspect the source code to identify all ValueError/TypeError/etc. guard clauses
-     and write a pytest.raises() test for each one.
-7. Cover normal cases, edge cases, and every exception-raising branch.
 8. Do NOT define pytest fixtures or helper classes that re-implement source classes.
    The source classes are already imported via `from {module_name} import *`.
    Instantiate them directly: obj = ClassName(args) — no fixtures needed.
@@ -140,7 +141,7 @@ def build_coverage_prompt(function_meta: dict, uncovered_lines: list) -> str:
     uncovered_str = "\n".join(uncovered_content) if uncovered_content else str(uncovered_lines)
 
     return f"""The existing tests do not cover all lines of the function '{name}'.
-Generate ADDITIONAL pytest test functions specifically targeting the uncovered lines below.
+Generate at most 2 ADDITIONAL pytest test functions targeting the uncovered lines below.
 
 Function source:
 ```python
@@ -152,6 +153,7 @@ Uncovered lines that need coverage:
 
 Requirements:
 - Return ONLY new test functions as valid Python code — no prose, no markdown fences.
+- Write at most 2 new test functions — only what is needed to hit the uncovered lines.
 - Do NOT include any import statements.
 - Each test function must start with test_.
 - Focus on the code paths that reach the uncovered lines.
@@ -175,7 +177,7 @@ def build_js_prompt(function_meta: dict, module_name: str = "") -> str:
         import_line = f"const {{ {name} }} = require('./{module_name or name}');"
 
     return f"""You are an expert JavaScript test engineer using Jest.
-Generate Jest test cases for the following function.
+Generate exactly {MAX_TESTS_PER_FUNCTION} Jest test cases for the following function.
 
 Function name: {name}
 Parameters: {args}
@@ -187,10 +189,11 @@ Source code (for reference — do NOT copy or redefine it):
 ```
 
 CRITICAL RULES — return ONLY the describe()/test() blocks, nothing else:
-1. Do NOT include any require() or import statements — they are added by the test harness.
-2. Do NOT copy, redefine, or re-implement the function — it is already imported.
-3. Use describe('{name}', () => {{ ... }}) containing test()/it() blocks with expect() assertions.
-4. Cover: normal inputs, edge cases, error/exception scenarios.
+1. Write EXACTLY {MAX_TESTS_PER_FUNCTION} test() blocks — no more, no fewer.
+   Prioritise: 1 happy path, 1 edge case, 1 error scenario (if applicable).
+2. Do NOT include any require() or import statements — they are added by the test harness.
+3. Do NOT copy, redefine, or re-implement the function — it is already imported.
+4. Use describe('{name}', () => {{ ... }}) containing test()/it() blocks with expect() assertions.
 5. Use jest.fn() or manual mocks only when strictly necessary.
 6. Return ONLY raw JavaScript test code — no prose, no markdown fences, no backticks.
 """
@@ -235,8 +238,11 @@ def build_js_module_prompt(functions: list, module_name: str, full_source: str) 
     """
     func_names = ", ".join(f["name"] for f in functions)
 
+    total_tests = len(functions) * MAX_TESTS_PER_FUNCTION
+
     return f"""You are an expert JavaScript test engineer using Jest (CommonJS environment).
 Generate a complete, runnable Jest test file for the module '{module_name}'.
+Write exactly {MAX_TESTS_PER_FUNCTION} test() blocks per function — {total_tests} tests total.
 
 Full module source:
 ```javascript
@@ -246,13 +252,14 @@ Full module source:
 Functions/methods to test: {func_names}
 
 CRITICAL RULES — read the source carefully before writing:
-1. ALWAYS use require() — NEVER use import/export syntax (Jest runs in CommonJS mode, import will crash).
+1. Write EXACTLY {MAX_TESTS_PER_FUNCTION} test() blocks per function ({total_tests} total) — no more.
+   Per function: 1 happy path, 1 edge case, 1 error scenario (if the function can throw/return error).
+2. ALWAYS use require() — NEVER use import/export syntax (Jest runs in CommonJS mode, import will crash).
    - Exported class:     const ClassName = require('./{module_name}');  then  new ClassName()
    - Exported object:    const {{ fn1, fn2 }} = require('./{module_name}');
    - Default function:   const fn = require('./{module_name}');
-2. Do NOT copy, redefine, or re-implement anything from the source.
-3. Use describe() blocks per function/method and test()/it() with expect() assertions.
-4. Cover: normal inputs, edge cases, and error/exception scenarios.
+3. Do NOT copy, redefine, or re-implement anything from the source.
+4. Use describe() blocks per function/method and test()/it() with expect() assertions.
 5. Return ONLY raw JavaScript code — no prose, no markdown fences, no backticks.
 """
 
@@ -273,7 +280,7 @@ def build_js_coverage_prompt(function_meta: dict, uncovered_lines: list, file_na
     uncovered_str = "\n".join(uncovered_content) if uncovered_content else str(uncovered_lines)
 
     return f"""The existing Jest tests do not cover all lines of '{name}' in {file_name or 'the source file'}.
-Generate ADDITIONAL Jest test cases targeting the uncovered lines below.
+Generate at most 2 ADDITIONAL Jest test cases targeting the uncovered lines below.
 Return ONLY valid JavaScript test code that can be appended to the existing test file.
 
 Function source:
@@ -285,6 +292,7 @@ Uncovered lines:
 {uncovered_str}
 
 CRITICAL RULES:
+- Write at most 2 new test()/it() blocks — only what is needed to hit the uncovered lines.
 - Return ONLY new test()/it() or describe() blocks — no require/import lines.
 - NEVER use import/export syntax — Jest runs in CommonJS mode.
 - Do NOT redefine the function.
@@ -302,7 +310,7 @@ def call_llm(prompt: str) -> str:
     client = _get_client()
     message = client.messages.create(
         model=_model(),
-        max_tokens=4096,
+        max_tokens=1024,
         system=(
             "You are an expert software test engineer. "
             "Return ONLY raw executable code — no markdown fences, no backticks, "

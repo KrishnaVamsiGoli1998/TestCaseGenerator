@@ -21,7 +21,7 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 TEST_OUTPUT_DIR = os.getenv("TEST_OUTPUT_DIR", "generated_tests")
 MAX_FILE_SIZE_KB = int(os.getenv("MAX_FILE_SIZE_KB", "500"))
 MAX_FILES = int(os.getenv("MAX_FILES_PER_SESSION", "10"))
-PIPELINE_TIMEOUT = int(os.getenv("PIPELINE_TIMEOUT_SECONDS", "180"))
+PIPELINE_TIMEOUT = int(os.getenv("PIPELINE_TIMEOUT_SECONDS", "600"))
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
